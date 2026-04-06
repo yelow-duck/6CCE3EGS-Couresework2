@@ -11,10 +11,10 @@ MAX_POWER_KW = 1000.0
 ETA_CH = 0.938             
 ETA_DIS = 0.938            
 
-# 初始荷电状态: 容量的 50% [cite: 91]
+# Initial SOC: 50%
 INITIAL_SOC_KWH = 0.5 * CAPACITY_KWH  
 
-DELTA_T = 1.0              
+DELTA_T = 1.0
 
 
 file_path = 'caseB_grid_battery_market_hourly.csv'
@@ -24,9 +24,8 @@ except FileNotFoundError:
     print(f"Error: 找不到文件 {file_path}。请确保数据文件在同一目录下。")
     exit()
 
-# 强制性要求: 必须执行并展示单位转换 [cite: 80]
-# 理论依据: 电价单位为 GBP/MWh，功率单位为 kW。为了能量结算统一，将电价转换为 GBP/kWh。
-# 换算公式: 1 MWh = 1000 kWh -> GBP/kWh = GBP/MWh / 1000
+
+# GBP/MWh -> GBP/kWh
 df['price_gbp_per_kwh'] = df['day_ahead_price_gbp_per_mwh'] / 1000.0
 
 time_steps = range(len(df))
@@ -35,13 +34,13 @@ time_steps = range(len(df))
 # Maximize Profit
 model = pulp.LpProblem("Base_Battery_Arbitrage", pulp.LpMaximize)
 
-# ==========================================
+
 # Bound Variables
-# 理论依据: 充放电功率在任何 delta_t=1h 内，均不可超过硬件逆变器的 1000 kW 极值。
+# No more than 1000 kW in an hour.
 p_ch = pulp.LpVariable.dicts("P_ch", time_steps, lowBound=0, upBound=MAX_POWER_KW, cat='Continuous')
 p_dis = pulp.LpVariable.dicts("P_dis", time_steps, lowBound=0, upBound=MAX_POWER_KW, cat='Continuous')
 
-# 理论依据: SOC 变量定义了电池在任何时刻内部的绝对化学能，极值被死锁在 0 到 2000 kWh 之间。
+# SOC = 0 - 2000 kWh
 soc = pulp.LpVariable.dicts("SOC", time_steps, lowBound=0, upBound=CAPACITY_KWH, cat='Continuous')
 
 
@@ -67,16 +66,15 @@ for t in time_steps:
 # 理论依据: 避免模型为了最后一点利润将电池彻底榨干，确保下一个调度周期的物理连续性。
 model += soc[len(time_steps)-1] >= INITIAL_SOC_KWH, "End_SOC_Requirement"
 
-# ==========================================
-# 7. 求解与指标计算
-# ==========================================
+
+# solve the model
 print("正在计算最优调度策略...")
 model.solve()
 
 if pulp.LpStatus[model.status] == 'Optimal':
     total_profit = pulp.value(model.objective)
     
-    # 初始化统计指标
+    # initialize metrics
     total_energy_throughput_kwh = 0.0
     total_discharge_kwh = 0.0
     results = []
@@ -86,7 +84,7 @@ if pulp.LpStatus[model.status] == 'Optimal':
         dis_kw = p_dis[t].varValue
         soc_val = soc[t].varValue
         
-        # 记录每小时吞吐量 [cite: 82]
+        # hourly energy throughput = (charge + discharge) * time step duration
         total_energy_throughput_kwh += (ch_kw + dis_kw) * DELTA_T
         total_discharge_kwh += dis_kw * DELTA_T
         
